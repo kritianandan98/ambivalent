@@ -1,4 +1,5 @@
-sample_rate = 32000
+#sample_rate = 32000
+sample_rate = 16000
 clip_samples = sample_rate * 30
 
 mel_bins = 64
@@ -14,8 +15,7 @@ ref = 1.0
 amin = 1e-10
 top_db = None
 
-labels = ['blues', 'classical', 'country', 'disco', 'hiphop', 'jazz', 'metal', 
-    'pop', 'reggae', 'rock']
+labels = ["hap", "exc", "neu", "sad", "ang", "fru"]
     
 lb_to_idx = {lb: idx for idx, lb in enumerate(labels)}
 idx_to_lb = {idx: lb for idx, lb in enumerate(labels)}

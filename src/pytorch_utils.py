@@ -1,7 +1,5 @@
 import numpy as np
-import time
 import torch
-import torch.nn as nn
 
 
 def move_data_to_device(x, device):
@@ -58,9 +56,9 @@ def forward(model, generator, return_input=False,
 
     # Forward data to a model in mini-batches
     for n, batch_data_dict in enumerate(generator):
-        print(n)
-        batch_waveform = move_data_to_device(batch_data_dict['waveform'], device)
-        
+        #print(n)
+        #batch_waveform = move_data_to_device(batch_data_dict['waveform'], device)
+        batch_waveform = move_data_to_device(batch_data_dict['logmel_feat'], device)
         with torch.no_grad():
             model.eval()
             batch_output = model(batch_waveform)

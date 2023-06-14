@@ -3,16 +3,10 @@ import h5py
 import csv
 import time
 import logging
-import os
-import glob
-import matplotlib.pyplot as plt
 import logging
 
-import config
-from utilities import int16_to_float32
 
-
-class GtzanDataset(object):
+class AmbiDataset(object):
     def __init__(self):
         """This class takes the meta of an audio clip as input, and return 
         the waveform and target of the audio clip. This class is used by DataLoader. 
@@ -41,11 +35,14 @@ class GtzanDataset(object):
 
         with h5py.File(hdf5_path, 'r') as hf:
             audio_name = hf['audio_name'][index_in_hdf5].decode()
-            waveform = int16_to_float32(hf['waveform'][index_in_hdf5])
+            #waveform = int16_to_float32(hf['waveform'][index_in_hdf5])
+            logmel_feat = hf['logmel_feat'][index_in_hdf5]
             target = hf['target'][index_in_hdf5].astype(np.float32)
 
+        #data_dict = {
+        #    'audio_name': audio_name, 'waveform': waveform, 'target': target}
         data_dict = {
-            'audio_name': audio_name, 'waveform': waveform, 'target': target}
+            'audio_name': audio_name, 'logmel_feat': logmel_feat, 'target': target}
             
         return data_dict
 
@@ -93,6 +90,7 @@ class TrainSampler(object):
 
         self.hdf5_path = hdf5_path
         self.batch_size = batch_size
+    
         self.random_state = np.random.RandomState(random_seed)
 
         with h5py.File(hdf5_path, 'r') as hf:
@@ -100,6 +98,7 @@ class TrainSampler(object):
 
         self.indexes = np.where(self.folds != int(holdout_fold))[0]
         self.audios_num = len(self.indexes)
+
         # self.validate_audio_indexes = np.where(self.folds == int(holdout_fold))[0]
         
         # self.indexes = np.arange(self.audios_num)
@@ -120,26 +119,26 @@ class TrainSampler(object):
              'target': [0, 1, 0, 0, ...]}, 
             ...]
         """
+
         batch_size = self.batch_size
+        pointer = 0
 
-        while True:
+        while pointer < self.audios_num:
+            batch_indexes = np.arange(pointer, 
+                min(pointer + batch_size, self.audios_num))
+
             batch_meta = []
-            i = 0
-            while i < batch_size:
-                index = self.indexes[self.pointer]
-                self.pointer += 1
 
-                # Shuffle indexes and reset pointer
-                if self.pointer >= self.audios_num:
-                    self.pointer = 0
-                    self.random_state.shuffle(self.indexes)
-                
+            for i in batch_indexes:
                 batch_meta.append({
                     'hdf5_path': self.hdf5_path, 
-                    'index_in_hdf5': self.indexes[self.pointer]})
-                i += 1
+                    'index_in_hdf5': self.indexes[i]})
 
+            pointer += batch_size
             yield batch_meta
+
+    def __len__(self):
+        return int(self.audios_num / self.batch_size) + 1
 
     def state_dict(self):
         state = {
@@ -201,6 +200,58 @@ class EvaluateSampler(object):
 
             pointer += batch_size
             yield batch_meta
+
+    def __len__(self):
+        return int(self.audios_num / self.batch_size) + 1
+
+class TestSampler(object):
+    def __init__(self, hdf5_path, batch_size):
+        """Balanced sampler. Generate batch meta for training.
+        
+        Args:
+          indexes_hdf5_path: string
+          batch_size: int
+          black_list_csv: string
+          random_seed: int
+        """
+
+        self.hdf5_path = hdf5_path
+        self.batch_size = batch_size
+
+        with h5py.File(hdf5_path, 'r') as hf:
+            self.indexes = np.arange(len(hf['audio_name']))
+        self.audios_num = len(self.indexes)
+        
+    def __iter__(self):
+        """Generate batch meta for training. 
+        
+        Returns:
+          batch_meta: e.g.: [
+            {'audio_name': 'YfWBzCRl6LUs.wav', 
+             'hdf5_path': 'xx/balanced_train.h5', 
+             'index_in_hdf5': 15734, 
+             'target': [0, 1, 0, 0, ...]}, 
+            ...]
+        """
+        batch_size = self.batch_size
+        pointer = 0
+
+        while pointer < self.audios_num:
+            batch_indexes = np.arange(pointer, 
+                min(pointer + batch_size, self.audios_num))
+
+            batch_meta = []
+
+            for i in batch_indexes:
+                batch_meta.append({
+                    'hdf5_path': self.hdf5_path, 
+                    'index_in_hdf5': self.indexes[i]})
+
+            pointer += batch_size
+            yield batch_meta
+
+    def __len__(self):
+        return int(self.audios_num / self.batch_size) + 1
 
 
 def collate_fn(list_data_dict):
