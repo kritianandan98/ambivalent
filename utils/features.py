@@ -118,7 +118,7 @@ def pack_audio_files_to_hdf5(args):
 
         hf.create_dataset(
             name='logmel_feat', 
-            shape=(audios_num, 1501, mel_bins), 
+            shape=(audios_num, 3001, mel_bins), 
             dtype=np.float32)
 
         hf.create_dataset(
