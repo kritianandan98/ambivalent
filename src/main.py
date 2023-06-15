@@ -135,7 +135,7 @@ def train(args):
     #    eps=1e-08, weight_decay=0., amsgrad=True)
 
     # SGD minibatch-gradient descent
-    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9)
+    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9, nesterov=True)
 
     if 'mixup' in augmentation:
         mixup_augmenter = Mixup(mixup_alpha=1.)
@@ -330,8 +330,7 @@ if __name__ == '__main__':
     parser_train.add_argument('--augmentation', type=str, choices=['none', 'mixup'], required=True)
     parser_train.add_argument('--learning_rate', type=float, required=True)
     parser_train.add_argument('--batch_size', type=int, required=True)
-    parser_train.add_argument('--resume_iteration', type=int)
-    parser_train.add_argument('--stop_iteration', type=int, required=True)
+    parser_train.add_argument('--resume_epoch', type=int)
     parser_train.add_argument('--minidata', action='store_true', default=False)
     parser_train.add_argument('--cuda', action='store_true', default=False)
 
