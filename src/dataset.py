@@ -45,56 +45,6 @@ class AmbiDataset(object):
             return len(hf['info']['audio_name'])
 
 
-class TestSampler(object):
-    def __init__(self, hdf5_path, batch_size):
-        """Balanced sampler. Generate batch meta for training.
-        
-        Args:
-          indexes_hdf5_path: string
-          batch_size: int
-          black_list_csv: string
-          random_seed: int
-        """
-
-        self.hdf5_path = hdf5_path
-        self.batch_size = batch_size
-
-        with h5py.File(hdf5_path, 'r') as hf:
-            self.indexes = np.arange(len(hf['audio_name']))
-        self.audios_num = len(self.indexes)
-        
-    def __iter__(self):
-        """Generate batch meta for training. 
-        
-        Returns:
-          batch_meta: e.g.: [
-            {'audio_name': 'YfWBzCRl6LUs.wav', 
-             'hdf5_path': 'xx/balanced_train.h5', 
-             'index_in_hdf5': 15734, 
-             'target': [0, 1, 0, 0, ...]}, 
-            ...]
-        """
-        batch_size = self.batch_size
-        pointer = 0
-
-        while pointer < self.audios_num:
-            batch_indexes = np.arange(pointer, 
-                min(pointer + batch_size, self.audios_num))
-
-            batch_meta = []
-
-            for i in batch_indexes:
-                batch_meta.append({
-                    'hdf5_path': self.hdf5_path, 
-                    'index_in_hdf5': self.indexes[i]})
-
-            pointer += batch_size
-            yield batch_meta
-
-    def __len__(self):
-        return int(self.audios_num / self.batch_size) + 1
-
-
 def collate_fn(list_data_dict):
     """Collate data.
     Args:
