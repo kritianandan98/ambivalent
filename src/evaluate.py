@@ -1,12 +1,11 @@
+import torch
 import numpy as np
 import logging
 import torch.nn.functional as F
 from sklearn import metrics
 from scipy.special import softmax
 
-from pytorch_utils import forward
-from utilities import get_filename
-import config
+from .utils import forward
 
 
 def calculate_accuracy(y_true, y_score):
@@ -22,7 +21,7 @@ class Evaluator(object):
     def __init__(self, model):
         self.model = model
 
-    def evaluate(self, data_loader):
+    def evaluate(self, data_loader, loss_func, weights=None):
 
         # Forward
         output_dict = forward(
@@ -33,14 +32,17 @@ class Evaluator(object):
         clipwise_output = output_dict['clipwise_output']    # (audios_num, classes_num)
         #print("logits:", clipwise_output)
         predictions = softmax(clipwise_output, axis=-1)
-        target = output_dict['target']    # (audios_num, classes_num)
-        #print("predictions:", predictions)
+        targets = output_dict['target']    # (audios_num, classes_num)
+        #print("target:", targets)
 
-        cm = metrics.confusion_matrix(np.argmax(target, axis=-1), np.argmax(predictions, axis=-1), labels=None)
-        accuracy = calculate_accuracy(target, predictions)
-        f1 = calculate_F1(target, predictions)
+        cm = metrics.confusion_matrix(np.argmax(targets, axis=-1), np.argmax(predictions, axis=-1), labels=None)
+        clipwise_output_cuda = torch.FloatTensor(clipwise_output).to('cuda')
+        targets_cuda = torch.FloatTensor(targets).to('cuda')
+        loss = loss_func(clipwise_output_cuda, targets_cuda, weights)
+        accuracy = calculate_accuracy(targets, predictions)
+        f1 = calculate_F1(targets, predictions)
 
         statistics = {'accuracy': accuracy, 'f1_score': f1}
         pred_labels = np.argmax(predictions, axis=-1)
         
-        return statistics, pred_labels
+        return statistics, pred_labels, loss

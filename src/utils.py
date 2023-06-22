@@ -1,5 +1,31 @@
+import os
+import logging
 import numpy as np
 import torch
+from scipy import stats 
+import datetime
+import pickle
+
+
+def create_folder(fd):
+    if not os.path.exists(fd):
+        os.makedirs(fd)
+        
+        
+def get_filename(path):
+    path = os.path.realpath(path)
+    na_ext = path.split('/')[-1]
+    na = os.path.splitext(na_ext)[0]
+    return na
+
+
+def get_sub_filepaths(folder):
+    paths = []
+    for root, dirs, files in os.walk(folder):
+        for name in files:
+            path = os.path.join(root, name)
+            paths.append(path)
+    return paths
 
 
 def move_data_to_device(x, device):
@@ -11,6 +37,31 @@ def move_data_to_device(x, device):
         return x
 
     return x.to(device)
+
+
+def create_logging(log_dir, filemode):
+    create_folder(log_dir)
+    i1 = 0
+
+    while os.path.isfile(os.path.join(log_dir, '{:04d}.log'.format(i1))):
+        i1 += 1
+        
+    log_path = os.path.join(log_dir, '{:04d}.log'.format(i1))
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s',
+        datefmt='%a, %d %b %Y %H:%M:%S',
+        filename=log_path,
+        filemode=filemode)
+
+    # Print to console
+    console = logging.StreamHandler()
+    console.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(name)-12s: %(levelname)-8s %(message)s')
+    console.setFormatter(formatter)
+    logging.getLogger('').addHandler(console)
+    
+    return logging
 
 
 def do_mixup(x, mixup_lambda):
@@ -58,7 +109,7 @@ def forward(model, generator, return_input=False,
     for n, batch_data_dict in enumerate(generator):
         #print(n)
         #batch_waveform = move_data_to_device(batch_data_dict['waveform'], device)
-        batch_waveform = move_data_to_device(batch_data_dict['logmel_feat'], device)
+        batch_waveform = move_data_to_device(batch_data_dict['features'], device)
         with torch.no_grad():
             model.eval()
             batch_output = model(batch_waveform)
@@ -66,7 +117,7 @@ def forward(model, generator, return_input=False,
         append_to_dict(output_dict, 'audio_name', batch_data_dict['audio_name'])
 
         append_to_dict(output_dict, 'clipwise_output', 
-            batch_output['clipwise_output'].data.cpu().numpy())
+            batch_output.data.cpu().numpy())
             
         if return_input:
             append_to_dict(output_dict, 'waveform', batch_data_dict['waveform'])
