@@ -4,9 +4,11 @@ import logging
 import torch.nn.functional as F
 from sklearn import metrics
 from scipy.special import softmax
+from . import config
+from tqdm import tqdm
 
 from .utils import forward
-
+from .utils import move_data_to_device
 
 def calculate_accuracy(y_true, y_score):
     accuracy = metrics.accuracy_score(np.argmax(y_true, axis=-1), np.argmax(y_score, axis=-1))
@@ -25,9 +27,9 @@ class Evaluator(object):
 
         # Forward
         output_dict = forward(
-            model=self.model, 
-            generator=data_loader, 
-            return_target=True)
+        model=self.model, 
+        generator=data_loader, 
+        return_target=True)
 
         clipwise_output = output_dict['clipwise_output']    # (audios_num, classes_num)
         #print("logits:", clipwise_output)
@@ -39,6 +41,8 @@ class Evaluator(object):
         clipwise_output_cuda = torch.FloatTensor(clipwise_output).to('cuda')
         targets_cuda = torch.FloatTensor(targets).to('cuda')
         loss = loss_func(clipwise_output_cuda, targets_cuda, weights)
+        #print("targets", targets)
+        #print("predictions", predictions)
         accuracy = calculate_accuracy(targets, predictions)
         f1 = calculate_F1(targets, predictions)
 

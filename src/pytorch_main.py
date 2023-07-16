@@ -1,5 +1,5 @@
 """
-File to train and test the model.
+File to train and test torch models.
 """
 import os
 import wandb
@@ -17,16 +17,17 @@ from . import config
 from .losses import get_loss_func
 from .utils import move_data_to_device, do_mixup
 from .utils import (create_folder, get_filename, create_logging)
-from .dataset import AmbiDataset, collate_fn
-from .models import Cnn14, Cnn10, Cnn6, CNN, DNN, LSTM
-from .evaluate import Evaluator
+from .dataset import AmbiDataset, train_collate_fn, test_collate_fn
+from .models import Cnn14, Cnn10, Cnn6, CNN, MLP, LSTM, BiLSTM, Wav2Vec2
+from .evaluate import Evaluator, calculate_accuracy, calculate_F1
+from sklearn import metrics
 from sklearn.utils.class_weight import compute_class_weight
+from scipy.special import softmax
 
 from torchinfo import summary
 #from torchsummary import summary
 
-os.environ["WANDB_MODE"] = "online"
-
+os.environ["WANDB_MODE"] = "offline"
 
 def train(args):
     # Arugments & parameters
@@ -44,6 +45,7 @@ def train(args):
     augmentation = config.augmentation
     learning_rate = config.learning_rate
     batch_size = config.batch_size
+    grad_accum = config.grad_accum
     num_workers = config.num_workers
     run_name = config.run_name
     classes_num = config.classes_num
@@ -104,10 +106,10 @@ def train(args):
     train_dataset = AmbiDataset(train_hdf5_path)
     val_dataset = AmbiDataset(val_hdf5_path)
 
-    train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=batch_size, collate_fn=collate_fn, 
+    train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=batch_size, collate_fn=train_collate_fn, 
         num_workers=num_workers, pin_memory=True)
 
-    validate_loader = torch.utils.data.DataLoader(dataset=val_dataset, batch_size=batch_size, collate_fn=collate_fn, 
+    validate_loader = torch.utils.data.DataLoader(dataset=val_dataset, batch_size=batch_size, collate_fn=train_collate_fn, 
         num_workers=num_workers, pin_memory=True)
 
     if 'cuda' in device:
@@ -119,9 +121,10 @@ def train(args):
     #    eps=1e-08, weight_decay=0., amsgrad=True)
 
     # SGD minibatch-gradient descent
+    #optimizer = torch.optim.RMSprop(model.parameters(), lr=learning_rate, alpha=0.99, eps=1e-08, weight_decay=0, momentum=0, centered=False)
     #optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9, nesterov=True)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    #scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5)
     #T_0 = 5
     #T_mult = 1
     #scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0, T_mult)
@@ -133,7 +136,8 @@ def train(args):
     evaluator = Evaluator(model=model)
 
     # Summary of the model
-    summary(model, input_size=(train_dataset[0]['features'].shape))
+    #print(train_dataset[0]['features'].shape)
+    #summary(model, input_size=(train_dataset[0]['features'].shape))
 
     # Use wandb if enabled
     wandb.init(
@@ -157,40 +161,52 @@ def train(args):
     #print(targets)
 
     class_weights = compute_class_weight(class_weight='balanced',classes=np.unique(targets),y=targets)
+    if minidata:
+        class_weights = np.array([1, 1, 1, 1, 1, 1])
     class_weights = torch.tensor(class_weights,dtype=torch.float)
     class_weights = class_weights.to(device)
 
     wandb.watch(model, log="all")
 
-    best_valid_loss=float('inf')
+    best_valid_loss = np.float('inf')
     
+    optimizer.zero_grad()
+
     while epoch < n_epochs:
         # Set model to train mode
         model.train(True)
 
         n_batches = 0
         # Train on mini batches
-        for i, batch_data_dict in tqdm(enumerate(train_loader), total=len(train_loader)):
+        for batch_id, batch_data_dict in tqdm(enumerate(train_loader), total=len(train_loader)):
             
-            # Move data to GPU
             for key in batch_data_dict.keys():
                 batch_data_dict[key] = move_data_to_device(batch_data_dict[key], device)
 
             #print("features", batch_data_dict['features'])
-
+            #print("features", batch_data_dict['features'].shape)
+            #print(batch_data_dict['features'].shape)
+            #batch_data_dict['features'] = move_data_to_device(batch_data_dict['features'], device)
             batch_output_dict = {"clipwise_output": model(batch_data_dict['features'])}
             #"""{'clipwise_output': (batch_size, classes_num), ...}"""
-
+            #print("target", batch_data_dict['target'].shape)
+            #print("clipwise output", batch_output_dict['clipwise_output'].shape)
+            batch_data_dict['target'] = move_data_to_device(batch_data_dict['target'], device)
             batch_target_dict = {'target': batch_data_dict['target']}
             #    """{'target': (batch_size, classes_num)}"""
 
             # loss
+            #print("clip wise", batch_output_dict['clipwise_output'].shape)
+            #print(" target ", batch_target_dict['target'].shape)
             batch_loss = loss_func(batch_output_dict['clipwise_output'], batch_target_dict['target'], class_weights)
 
             ## Backward (mini batch GD)
-            optimizer.zero_grad()
-            batch_loss.backward()
-            optimizer.step()
+            batch_loss.backward() # calculate gradients
+
+            if ((batch_id + 1) % grad_accum == 0) or (batch_id + 1 == len(train_loader)): # gradient accumulation
+                optimizer.step()
+                optimizer.zero_grad()
+
             n_batches += 1
 
             #scheduler.step(epoch + i / len(train_loader))
@@ -198,7 +214,8 @@ def train(args):
 
         ## Set the model to evaluation mode, disabling dropout and using population
         # Train Statistics
-        train_statistics, pred_labels, train_loss = evaluator.evaluate(train_loader, loss_func, class_weights)
+        model.eval()
+        train_statistics, pred_labels, train_loss = evaluator.evaluate(train_loader, loss_func)
         logging.info('Train accuracy: {:.3f}'.format(train_statistics['accuracy']))
         logging.info('Train F1: {:.3f}'.format(train_statistics['f1_score']))
 
@@ -209,22 +226,23 @@ def train(args):
         if epoch % 1 == 0:
             model.eval()
             # val statistics
-            val_statistics, pred_labels, val_loss = evaluator.evaluate(validate_loader, loss_func, class_weights)
+            val_statistics, pred_labels, val_loss = evaluator.evaluate(validate_loader, loss_func)
             logging.info('Validation loss: {:.3f}'.format(val_loss))
             logging.info('Validate accuracy: {:.3f}'.format(val_statistics['accuracy']))
             logging.info('Validate F1: {:.3f}'.format(val_statistics['f1_score']))
             print("pred labels: ", pred_labels)
+            val_f1 = val_statistics['f1_score']
 
             wandb.log({"val/loss": val_loss, "val/f1": val_statistics['f1_score']}, step=epoch)
 
-        #scheduler.step(val_loss)
+        scheduler.step(val_loss)
 
         for param_group in optimizer.param_groups:
             print("Current learning rate is: {}".format(param_group['lr']))
             wandb.log({'lr': param_group['lr']}, step=epoch)
 
         ## save model if drop in valid loss
-        if val_loss < best_valid_loss:
+        if val_loss < best_valid_loss and os.environ["WANDB_MODE"] == "online":
             best_valid_loss = val_loss
             checkpoint = {
                 'epoch': epoch, 
@@ -302,7 +320,7 @@ def test(args):
 
     # Data Loader
 
-    test_loader = torch.utils.data.DataLoader(dataset=dataset, collate_fn=collate_fn, batch_size=batch_size,
+    test_loader = torch.utils.data.DataLoader(dataset=dataset, collate_fn=test_collate_fn, batch_size=1,
         num_workers=num_workers, pin_memory=True)
 
     if 'cuda' in device:
@@ -310,25 +328,63 @@ def test(args):
 
     loss_func = get_loss_func(loss_type)
      
-    # Evaluator
-    evaluator = Evaluator(model=model)
     model.eval()
 
     logging.info('Testing model..')
-    
-    statistics, predictions, _ = evaluator.evaluate(test_loader, loss_func=loss_func)
-    logging.info('Test accuracy: {:.3f}'.format(statistics['accuracy']))
-    logging.info('Test F1: {:.3f}'.format(statistics['f1_score']))
+
+    outputs = []
+    targets = []
+    for id, data_dict in tqdm(enumerate(test_loader), total=len(test_loader)):
+        segment_preds = np.zeros(classes_num, dtype='float32')
+        segment_preds = move_data_to_device(segment_preds, device)
+        for seg_features in data_dict['features']:
+            #print(seg_features.dtype)
+            seg_features = move_data_to_device(seg_features, device)
+            seg_features = seg_features.unsqueeze(0) # batch_size of 1
+            #print("seg features", seg_features.shape)
+            segment_preds += model(seg_features)[0]
+        segment_preds /= len(data_dict['features'])
+        outputs.append(segment_preds.detach().cpu().numpy())
+        targets.append(data_dict['target'])
+
+    #print("outputs", outputs)
+    #print("targets", targets)
+
+    outputs = np.array(outputs, dtype='float32') # (audios_num, classes_num)
+    targets = np.vstack(targets)
+
+    #print("output shape", outputs.shape)
+    #print("targets shape", targets.shape)
+
+    #print("logits:", outputs)
+    predictions = softmax(outputs, axis=-1)
+    #print("target:", targets)
+
+    cm = metrics.confusion_matrix(np.argmax(targets, axis=-1), np.argmax(predictions, axis=-1), labels=None)
+    #print(cm)
+
+    report = metrics.classification_report(np.argmax(targets, -1), np.argmax(predictions, axis=-1), target_names=config.labels)
+    print(report)
+
+    print("targets", targets)
+    print("predictions", predictions)
+    accuracy = calculate_accuracy(targets, predictions)
+    f1 = calculate_F1(targets, predictions)
+
+    logging.info("Statistics on Noisy labels as ground truth:")
+    logging.info('Test accuracy: {:.3f}'.format(accuracy))
+    logging.info('Test F1: {:.3f}'.format(f1))
 
     logging.info('Storing predictions...')
     # store results in a CSV
     df = pd.DataFrame(columns=['wavfile', 'ground-truth', 'prediction', 'audio-path'])
 
+    predictions = np.argmax(predictions, axis=-1)
     with h5py.File(test_hdf5_path, 'r') as hf:
         for i, audiopath in enumerate(hf['info']['audio_name']):
             df.loc[i, 'wavfile'] = audiopath
             df.loc[i, 'prediction'] = config.idx_to_lb[predictions[i]]
-            df.loc[i, 'ground-truth'] = config.idx_to_lb[np.argmax(hf['info']['gt'][i], axis=-1)]
+            df.loc[i, 'ground-truth'] = config.idx_to_lb[np.argmax(hf['info']['gt'][i], axis=-1)] # store ground truth in 
             df.loc[i, 'audio-path'] = hf['info']['audio_path'][i]
         
     df.to_csv('result.csv', index=False)

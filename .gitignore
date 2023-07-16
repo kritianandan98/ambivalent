@@ -4,3 +4,10 @@
 *.hdf5
 *.pyc
 __pycache__
+logs/
+checkpoints/
+features/
+src/features/*.wav
+images/
+wandb/
+*.csv
