@@ -23,11 +23,14 @@ from .evaluate import Evaluator, calculate_accuracy, calculate_F1
 from sklearn import metrics
 from sklearn.utils.class_weight import compute_class_weight
 from scipy.special import softmax
+import matplotlib.pyplot as plt
+from sklearn.manifold import TSNE
+from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 
-from torchinfo import summary
+#from torchinfo import summary
 #from torchsummary import summary
 
-os.environ["WANDB_MODE"] = "offline"
+os.environ["WANDB_MODE"] = "online"
 
 def train(args):
     # Arugments & parameters
@@ -52,8 +55,6 @@ def train(args):
     feature_name = config.feature_name
 
     device = 'cuda' if (args.cuda and torch.cuda.is_available()) else 'cpu'
-
-    loss_func = get_loss_func(loss_type)
     pretrain = True if pretrained_checkpoint_path else False
 
     
@@ -97,6 +98,7 @@ def train(args):
         epoch = resume_checkpoint['epoch']
     else:
         epoch = 0
+        iteration = 0
 
     # Parallel
     print('GPU number: {}'.format(torch.cuda.device_count()))
@@ -108,6 +110,7 @@ def train(args):
 
     train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=batch_size, collate_fn=train_collate_fn, 
         num_workers=num_workers, pin_memory=True)
+    print("Number of batches: ", len(train_loader))
 
     validate_loader = torch.utils.data.DataLoader(dataset=val_dataset, batch_size=batch_size, collate_fn=train_collate_fn, 
         num_workers=num_workers, pin_memory=True)
@@ -124,7 +127,7 @@ def train(args):
     #optimizer = torch.optim.RMSprop(model.parameters(), lr=learning_rate, alpha=0.99, eps=1e-08, weight_decay=0, momentum=0, centered=False)
     #optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9, nesterov=True)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', patience=5, factor=0.5)
     #T_0 = 5
     #T_mult = 1
     #scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0, T_mult)
@@ -162,18 +165,25 @@ def train(args):
 
     class_weights = compute_class_weight(class_weight='balanced',classes=np.unique(targets),y=targets)
     if minidata:
-        class_weights = np.array([1, 1, 1, 1, 1, 1])
+        class_weights = np.ones(len(config.labels))
     class_weights = torch.tensor(class_weights,dtype=torch.float)
     class_weights = class_weights.to(device)
 
+    train_loss_params = {"weights": class_weights, "total_epochs": n_epochs, "total_iterations": n_epochs * len(train_loader), "exp_base": 6, "transit_time_ratio": 0.25 , "counter": "iteration"}
+    loss_func = get_loss_func(loss_type, train_loss_params)
+
+
     wandb.watch(model, log="all")
 
-    best_valid_loss = np.float('inf')
-    
+    best_valid_f1 = 0
     optimizer.zero_grad()
 
+    epoch = 0
+    iteration = 1
     while epoch < n_epochs:
         # Set model to train mode
+        labels_changed = 0
+        labels_corrected = 0
         model.train(True)
 
         n_batches = 0
@@ -196,11 +206,28 @@ def train(args):
             #    """{'target': (batch_size, classes_num)}"""
 
             # loss
-            #print("clip wise", batch_output_dict['clipwise_output'].shape)
+            #print("clip wise", batch_output_dict['clipwise_output'])
             #print(" target ", batch_target_dict['target'].shape)
-            batch_loss = loss_func(batch_output_dict['clipwise_output'], batch_target_dict['target'], class_weights)
+            #print("total batches", len(train_loader))
+            #print("total iter", loss_params['total_iterations'])
+            #print("cur time", iteration)
+            batch_loss, new_targets = loss_func(y_pred=batch_output_dict['clipwise_output'], y_true=batch_target_dict['target'], cur_time=iteration)
+            if loss_type == 'proselflc':
+                old_targets = torch.argmax(batch_data_dict['target'], -1)
+                new_targets = torch.argmax(new_targets, -1)
+                gt = torch.argmax(batch_data_dict['gt'], -1)
+                #print(new_targets)
+                #print(old_targets)
+                #print(gt)
+                for i, t in enumerate(new_targets):
+                    if t != old_targets[i]:
+                        if t == gt[i]:
+                            labels_corrected += 1
+                        labels_changed += 1
+
 
             ## Backward (mini batch GD)
+            #print(batch_loss)
             batch_loss.backward() # calculate gradients
 
             if ((batch_id + 1) % grad_accum == 0) or (batch_id + 1 == len(train_loader)): # gradient accumulation
@@ -208,42 +235,42 @@ def train(args):
                 optimizer.zero_grad()
 
             n_batches += 1
+            iteration += 1
 
             #scheduler.step(epoch + i / len(train_loader))
 
 
         ## Set the model to evaluation mode, disabling dropout and using population
         # Train Statistics
+        wandb.log({'train labels corrected': labels_corrected, 'train labels changed': labels_changed}, step=epoch)
         model.eval()
-        train_statistics, pred_labels, train_loss = evaluator.evaluate(train_loader, loss_func)
+        train_statistics, pred_labels = evaluator.evaluate(train_loader)
         logging.info('Train accuracy: {:.3f}'.format(train_statistics['accuracy']))
         logging.info('Train F1: {:.3f}'.format(train_statistics['f1_score']))
 
-        logging.info('Epoch: {} Train Loss  : {:.3f}, '.format(epoch, train_loss))
-        wandb.log({"train/loss": train_loss ,"train/f1": train_statistics['f1_score']}, step=epoch)
+        logging.info('Epoch: {} Train Loss  : {:.3f}, '.format(epoch, train_statistics['cce-hard']))
+        wandb.log({"train/loss": train_statistics['cce-hard'] ,"train/f1": train_statistics['f1_score']}, step=epoch)
 
         # Validation Statistics
-        if epoch % 1 == 0:
-            model.eval()
-            # val statistics
-            val_statistics, pred_labels, val_loss = evaluator.evaluate(validate_loader, loss_func)
-            logging.info('Validation loss: {:.3f}'.format(val_loss))
-            logging.info('Validate accuracy: {:.3f}'.format(val_statistics['accuracy']))
-            logging.info('Validate F1: {:.3f}'.format(val_statistics['f1_score']))
-            print("pred labels: ", pred_labels)
-            val_f1 = val_statistics['f1_score']
+        # val statistics
+        val_statistics, pred_labels = evaluator.evaluate(validate_loader)
+        logging.info('Validation loss: {:.3f}'.format(val_statistics['cce-hard']))
+        logging.info('Validate accuracy: {:.3f}'.format(val_statistics['accuracy']))
+        logging.info('Validate F1: {:.3f}'.format(val_statistics['f1_score']))
+        print("pred labels: ", pred_labels)
+        val_f1 = val_statistics['f1_score']
 
-            wandb.log({"val/loss": val_loss, "val/f1": val_statistics['f1_score']}, step=epoch)
+        wandb.log({"val/cce-hard": val_statistics['cce-hard'], "val/cce-soft": val_statistics['cce-soft'], "val/f1": val_statistics['f1_score'], "val/ece" : val_statistics["ece"], "val/brier-hard": val_statistics["brier-hard"], "val/brier-soft": val_statistics["brier-soft"], "val/kl-hard": val_statistics['kl-hard'], "val/kl-soft": val_statistics['kl-soft']}, step=epoch)
 
-        scheduler.step(val_loss)
+        scheduler.step(val_f1)
 
         for param_group in optimizer.param_groups:
             print("Current learning rate is: {}".format(param_group['lr']))
             wandb.log({'lr': param_group['lr']}, step=epoch)
 
         ## save model if drop in valid loss
-        if val_loss < best_valid_loss and os.environ["WANDB_MODE"] == "online":
-            best_valid_loss = val_loss
+        if val_f1 > best_valid_f1 and os.environ["WANDB_MODE"] == "online":
+            best_valid_f1 = val_f1
             checkpoint = {
                 'epoch': epoch, 
                 'model': model.module.state_dict()}
@@ -284,6 +311,7 @@ def test(args):
 
     pretrain = True if pretrained_checkpoint_path else False
     
+    #test_hdf5_path = train_hdf5_path = os.path.join(workspace, 'features', feature_name + '_' + 'val_waveform.h5')
     test_hdf5_path = train_hdf5_path = os.path.join(workspace, 'features', feature_name + '_' + 'test_waveform.h5')
 
     checkpoints_dir = os.path.join(workspace, 'checkpoints', filename, model_type, '{}'.format(run_name), 'pretrain={}'.format(pretrain), 
@@ -314,7 +342,7 @@ def test(args):
 
     # Parallel
     print('GPU number: {}'.format(torch.cuda.device_count()))
-    model = torch.nn.DataParallel(model)
+    #model = torch.nn.DataParallel(model)
 
     dataset = AmbiDataset(test_hdf5_path)
 
@@ -326,14 +354,48 @@ def test(args):
     if 'cuda' in device:
         model.to(device)
 
-    loss_func = get_loss_func(loss_type)
+    loss_func = get_loss_func(loss_type='cce', params=None)
      
     model.eval()
+
+    if 'Wav2Vec2' in run_name:
+        # Load original pre-trained model and processor
+        test_len = len(test_loader)
+        test_len = 100
+        x = torch.vstack([torch.Tensor(dataset[i]['features'][0]) for i in range(test_len)])
+        x = x.to('cuda')
+
+        predicted_embeddings = []
+        labels = []
+        for input in x:
+            input = input.unsqueeze(0)
+            embed = torch.mean(model.upstream(input)['last_hidden_state'], dim=1).squeeze()
+            embed = embed.detach().cpu().numpy()
+            #print(embed.shape)
+            predicted_embeddings.append(embed)
+
+        predicted_embeddings = np.array(predicted_embeddings)
+        # Perform t-SNE dimensionality reduction
+        print(predicted_embeddings.shape)
+        tsne = TSNE(n_components=2, random_state=42)
+        tsne_embeddings = tsne.fit_transform(predicted_embeddings)
+
+        # Plot the t-SNE embeddings
+        plt.figure(figsize=(10, 8))
+        plt.scatter(tsne_embeddings[:, 0], tsne_embeddings[:, 1], marker='o', color='b', s=10)
+        plt.title("t-SNE Embeddings from Model Predictions")
+        plt.xlabel("t-SNE Dimension 1")
+        plt.ylabel("t-SNE Dimension 2")
+        plt.grid(True)
+        plt.savefig('/home/kriti/ambivalent/images/embed-plot.png')
 
     logging.info('Testing model..')
 
     outputs = []
     targets = []
+
+    seg_outputs = []
+    seg_targets = []
     for id, data_dict in tqdm(enumerate(test_loader), total=len(test_loader)):
         segment_preds = np.zeros(classes_num, dtype='float32')
         segment_preds = move_data_to_device(segment_preds, device)
@@ -342,7 +404,10 @@ def test(args):
             seg_features = move_data_to_device(seg_features, device)
             seg_features = seg_features.unsqueeze(0) # batch_size of 1
             #print("seg features", seg_features.shape)
-            segment_preds += model(seg_features)[0]
+            prediction = model(seg_features)[0]
+            segment_preds += prediction
+            seg_outputs.append(prediction.detach().cpu().numpy())
+            seg_targets.append(data_dict['target'])
         segment_preds /= len(data_dict['features'])
         outputs.append(segment_preds.detach().cpu().numpy())
         targets.append(data_dict['target'])
@@ -353,17 +418,26 @@ def test(args):
     outputs = np.array(outputs, dtype='float32') # (audios_num, classes_num)
     targets = np.vstack(targets)
 
+    seg_outputs = np.array(seg_outputs, dtype='float32')
+    seg_targets = np.vstack(seg_targets)
+
     #print("output shape", outputs.shape)
     #print("targets shape", targets.shape)
 
     #print("logits:", outputs)
-    predictions = softmax(outputs, axis=-1)
+    predictions = outputs / sum(outputs)
+    seg_predictions = seg_outputs / sum(seg_outputs)
     #print("target:", targets)
 
     cm = metrics.confusion_matrix(np.argmax(targets, axis=-1), np.argmax(predictions, axis=-1), labels=None)
-    #print(cm)
+    print(cm)
 
     report = metrics.classification_report(np.argmax(targets, -1), np.argmax(predictions, axis=-1), target_names=config.labels)
+    print("Adding up predictions")
+    print(report)
+
+    report = metrics.classification_report(np.argmax(seg_targets, -1), np.argmax(seg_predictions, axis=-1), target_names=config.labels)
+    print("Segment wise")
     print(report)
 
     print("targets", targets)
@@ -379,12 +453,14 @@ def test(args):
     # store results in a CSV
     df = pd.DataFrame(columns=['wavfile', 'ground-truth', 'prediction', 'audio-path'])
 
-    predictions = np.argmax(predictions, axis=-1)
     with h5py.File(test_hdf5_path, 'r') as hf:
         for i, audiopath in enumerate(hf['info']['audio_name']):
             df.loc[i, 'wavfile'] = audiopath
-            df.loc[i, 'prediction'] = config.idx_to_lb[predictions[i]]
+            df.loc[i, 'prediction'] = config.idx_to_lb[np.argmax(predictions[i], axis=-1)]
+            df.loc[i, 'pred-conf'] = str(predictions[i])
             df.loc[i, 'ground-truth'] = config.idx_to_lb[np.argmax(hf['info']['gt'][i], axis=-1)] # store ground truth in 
+            df.loc[i, 'gt-conf'] = str(hf['info']['gt'][i])
+            df.loc[i, 'soft-gt-conf'] = str(hf['info']['soft-gt'][i])
             df.loc[i, 'audio-path'] = hf['info']['audio_path'][i]
         
     df.to_csv('result.csv', index=False)

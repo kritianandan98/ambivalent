@@ -13,14 +13,14 @@ n_fft = 512
 hop_size = 256
 timesteps = math.ceil(clip_samples / hop_size)
 device = 'cuda'
-feature_name = "logmels-a" # hand-crafted, mean-mfcc, log-mels, all-timesteps, all-fixed, audio, logmels-a
+feature_name = "audios-segmented" # hand-crafted, mean-mfcc, log-mels, all-timesteps, all-fixed, audios, audios-segmented, logmels-a
 
 # hyperparameters
-run_name = "BiLSTM-1e-4-b64-logmels-a" # mlp, 
-epochs = 100
-model_type = "BiLSTM"
+run_name = "Wav2Vec2-final-baseline-noisy-hard-26.48" # mlp, 
+epochs = 20
+model_type = "Wav2Vec2" # BiLSTM, 
 loss_type = "cce"
-learning_rate = 1e-4
+learning_rate = 1e-5
 batch_size = 16
 grad_accum = 8 # accumulate every xth batch
 num_workers = 8
@@ -29,8 +29,11 @@ freeze_base = None
 augmentation = 'none'
 segment = True
 
-# classes
+# classes (hard)
 labels = ["ang", "exc", "fru", "hap", "neu", "sad"]
+upsample = {0: 100, 1: 300, 3: 600, 5: 200}
+#labels = ['ang', 'exc', 'neu', 'sad']
+#upsample = {0: 100, 1: 300, 3: 200}
 lb_to_idx = {lb: idx for idx, lb in enumerate(labels)}
 idx_to_lb = {idx: lb for idx, lb in enumerate(labels)}
 classes_num = len(labels)

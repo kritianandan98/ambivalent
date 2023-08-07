@@ -7,6 +7,8 @@ import torch.nn.functional as F
 
 from .utils import do_mixup, interpolate, pad_framewise_output
 from . import config
+from torchlibrosa.augmentation import SpecAugmentation
+from torchlibrosa.stft import Spectrogram, LogmelFilterBank
  
 
 def init_layer(layer):
@@ -89,6 +91,7 @@ class BiLSTM(nn.Module):
         out = out.squeeze(1)
         out = self.hidden2out(out)
         #print(out.shape)
+        out = F.softmax(out, -1)
         return out
     
 
@@ -122,6 +125,7 @@ class Wav2Vec2(nn.Module):
         #print(x.shape)
         out = self.fc(x)
         #print(torch.argmax(out, -1))
+        out = F.softmax(out, -1)
         return out
 
 
@@ -353,8 +357,8 @@ class Cnn10(nn.Module):
         #    x = self.spec_augmenter(x)
 
         # Mixup on spectrogram
-        if self.training and mixup_lambda is not None:
-            x = do_mixup(x, mixup_lambda)
+        #if self.training and mixup_lambda is not None:
+        #    x = do_mixup(x, mixup_lambda)
         
         x = self.conv_block1(x, pool_size=(2, 2), pool_type='avg')
         x = F.dropout(x, p=0.2, training=self.training)
@@ -380,11 +384,42 @@ class Cnn10(nn.Module):
 
 
 class Cnn14(nn.Module):
-    def __init__(self, classes_num):
+    def __init__(self, sample_rate, window_size, hop_size, mel_bins, fmin, 
+        fmax, classes_num):
         
         super(Cnn14, self).__init__()
 
-        self.bn0 = nn.BatchNorm2d(128)
+        sample_rate = 16000
+        clip_samples = sample_rate * 30
+
+        mel_bins = 64
+        fmin = 50
+        fmax = 14000
+        window_size = 512
+        hop_size = 160
+        window = 'hann'
+        pad_mode = 'reflect'
+        center = True
+        device = 'cuda'
+        ref = 1.0
+        amin = 1e-10
+        top_db = None
+
+        # Spectrogram extractor
+        self.spectrogram_extractor = Spectrogram(n_fft=window_size, hop_length=hop_size, 
+            win_length=window_size, window=window, center=center, pad_mode=pad_mode, 
+            freeze_parameters=True)
+
+        # Logmel feature extractor
+        self.logmel_extractor = LogmelFilterBank(sr=sample_rate, n_fft=window_size, 
+            n_mels=mel_bins, fmin=fmin, fmax=fmax, ref=ref, amin=amin, top_db=top_db, 
+            freeze_parameters=True)
+
+        # Spec augmenter
+        self.spec_augmenter = SpecAugmentation(time_drop_width=64, time_stripes_num=2, 
+            freq_drop_width=8, freq_stripes_num=2)
+
+        self.bn0 = nn.BatchNorm2d(64)
 
         self.conv_block1 = ConvBlock(in_channels=1, out_channels=64)
         self.conv_block2 = ConvBlock(in_channels=64, out_channels=128)
@@ -395,9 +430,6 @@ class Cnn14(nn.Module):
 
         self.fc1 = nn.Linear(2048, 2048, bias=True)
         self.fc_audioset = nn.Linear(2048, classes_num, bias=True)
-
-        #self.spec_augmenter = SpecAugmentation(time_drop_width=64, time_stripes_num=2, 
-        #    freq_drop_width=8, freq_stripes_num=2)
         
         self.init_weight()
 
@@ -409,19 +441,20 @@ class Cnn14(nn.Module):
     def forward(self, input, mixup_lambda=None):
         """
         Input: (batch_size, data_length)"""
- 
-        input = input.unsqueeze(1)  # (batch_size, 1, time_steps, mel_bins)
-        
-        x = input.transpose(1, 3)
+
+        x = self.spectrogram_extractor(input)   # (batch_size, 1, time_steps, freq_bins)
+        x = self.logmel_extractor(x)    # (batch_size, 1, time_steps, mel_bins)
+
+        x = x.transpose(1, 3)
         x = self.bn0(x)
         x = x.transpose(1, 3)
         
-        #if self.training:
-        #    x = self.spec_augmenter(x)
+        if self.training:
+            x = self.spec_augmenter(x)
 
-        #Mixup on spectrogram
-        #if self.training and mixup_lambda is not None:
-        #    x = do_mixup(x, mixup_lambda)
+        # Mixup on spectrogram
+        if self.training and mixup_lambda is not None:
+            x = do_mixup(x, mixup_lambda)
 
         x = self.conv_block1(x, pool_size=(2, 2), pool_type='avg')
         x = F.dropout(x, p=0.2, training=self.training)
@@ -443,12 +476,11 @@ class Cnn14(nn.Module):
         x = F.dropout(x, p=0.5, training=self.training)
         x = F.relu_(self.fc1(x))
         embedding = F.dropout(x, p=0.5, training=self.training)
-        #clipwise_output = torch.sigmoid(self.fc_audioset(x))
-        clipwise_output = self.fc_audioset(x)
+        clipwise_output = torch.softmax(self.fc_audioset(x))
         
         output_dict = {'clipwise_output': clipwise_output, 'embedding': embedding}
 
-        return clipwise_output
+        return output_dict
 
 
 class Transfer_Cnn14(nn.Module):

@@ -36,10 +36,11 @@ class AmbiDataset(object):
             features = hf['features'][str(index)][:]
             target = hf['info']['target'][index].astype(np.float32)
             gt = hf['info']['gt'][index].astype(np.float32)
+            soft_gt = hf['info']['soft-gt'][index].astype(np.float32)
             #print(features[0].shape)
 
         data_dict = {
-            'audio_name': audio_name, 'audio_path': audio_path, 'features': features, 'target': target, 'gt': gt, 'segments': segments}
+            'audio_name': audio_name, 'audio_path': audio_path, 'features': features, 'target': target, 'gt': gt, 'soft-gt': soft_gt, 'segments': segments}
          
         return data_dict
     
@@ -63,7 +64,7 @@ def test_collate_fn(list_data_dict):
     for key in list_data_dict[0].keys():
         if key == 'features':
             np_data_dict[key] = np.concatenate([np.expand_dims(seg, axis=0) for data_dict in list_data_dict for seg in data_dict[key]], axis=0, dtype='float32')
-        elif key == 'target' or key == 'gt':
+        elif key == 'target' or key == 'gt' or key == 'soft-gt':
             np_data_dict[key] = np.array([data_dict[key] for data_dict in list_data_dict], dtype='float32')
         else:
             np_data_dict[key] = np.array([data_dict[key] for data_dict in list_data_dict], dtype='object')

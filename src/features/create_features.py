@@ -86,7 +86,7 @@ def get_features(audio_vec, audio_name, audio_path):
         mfccs_std = np.std(mfccs.T, axis=0).reshape(-1)
         mfccs_max = np.max(mfccs.T, axis=0).reshape(-1) 
         return mfccs_mean
-    elif feature_name == "audios":
+    elif feature_name == "audios-segmented":
         min_samples = 1 * 16000 
         features = []
         (y, fs) = librosa.core.load(audio_path, sr=config.sample_rate, mono=True)
@@ -105,6 +105,10 @@ def get_features(audio_vec, audio_name, audio_path):
 
         features = np.array(features, dtype=np.float32) # n_segments, timesteps, n_mels
         return features
+    elif feature_name == "audios":
+        (y, fs) = librosa.core.load(audio_path, sr=config.sample_rate, mono=True)
+        print("here")
+        return np.array(y, dtype=np.float32)
     elif feature_name == "logmels-a":
         min_samples = 1 * 16000 
         features = []
@@ -308,6 +312,7 @@ def create_hdf5_files(df, name, args):
     workspace = args.workspace
     minidata = args.minidata
     test = args.test
+    noisy = args.noisy
 
     sample_rate = config.sample_rate
     mel_bins = config.mel_bins
@@ -326,13 +331,31 @@ def create_hdf5_files(df, name, args):
     audio_paths = df['audio-path']
     targets = df["noisy-label"]
     ground_truth = df["ground-truth"]
+    soft_gt = df["soft-gt"]
 
     meta_dict = {
-        'audio_name': np.array(audio_names), 
-        'audio_path': np.array(audio_paths), 
-        'target': np.array([lb_to_idx[target] for target in targets]), 
-        'gt': np.array([lb_to_idx[gt] for gt in ground_truth])}
-  
+    'audio_name': np.array(audio_names), 
+    'audio_path': np.array(audio_paths), 
+    'target': np.array([lb_to_idx[gt] for gt in ground_truth]), 
+    'gt': np.array([lb_to_idx[gt] for gt in ground_truth])}
+
+    total = []
+    for x in soft_gt:
+        row = []
+        for num in x.strip()[1:-1].split():
+            row.append(float(num))
+        total.append(row)
+    meta_dict['soft-gt'] = np.array(total)
+
+    print(meta_dict['soft-gt'])
+
+    print(noisy)
+    print(name)
+    if noisy and name == 'train': # train noisy or clean
+        print("yes")
+        meta_dict['target'] = np.array([lb_to_idx[target] for target in targets])
+        
+
     if minidata:
         mini_num = 10
         total_num = len(meta_dict['audio_name'])
@@ -375,6 +398,13 @@ def create_hdf5_files(df, name, args):
             maxshape = (None, classes_num),
             dtype=np.float32,
             chunks=True)
+        
+        info_grp.create_dataset(
+            name='soft-gt', 
+            shape=(audios_num, classes_num),
+            maxshape = (None, classes_num),
+            dtype=np.float32,
+            chunks=True)
  
         avg_time = 0
         max_time = 0
@@ -401,12 +431,14 @@ def create_hdf5_files(df, name, args):
                 info_grp['audio_path'].resize(size=(new_shape,))
                 info_grp['target'].resize(size=(new_shape, classes_num))
                 info_grp['gt'].resize(size=(new_shape, classes_num))
+                info_grp['soft-gt'].resize(size=(new_shape, classes_num))
                 for seg_features in features:
                     features_grp.create_dataset(str(idx), data=seg_features)
                     info_grp['audio_name'][idx] = audio_name.encode()
                     info_grp['audio_path'][idx] = audio_path.encode()
                     info_grp['target'][idx] = to_one_hot(meta_dict['target'][n], classes_num)
                     info_grp['gt'][idx] = to_one_hot(meta_dict['gt'][n], classes_num)
+                    info_grp['soft-gt'][idx] = meta_dict['soft-gt'][n]
                     idx += 1
             else:
                 features_grp.create_dataset(str(idx), data=features)
@@ -415,6 +447,7 @@ def create_hdf5_files(df, name, args):
                 info_grp['audio_path'][idx] = audio_path.encode()
                 info_grp['target'][idx] = to_one_hot(meta_dict['target'][n], classes_num)
                 info_grp['gt'][idx] = to_one_hot(meta_dict['gt'][n], classes_num)
+                info_grp['soft-gt'][idx] = meta_dict['soft-gt'][n]
                 idx += 1
 
 
@@ -436,7 +469,7 @@ def create_hdf5_files(df, name, args):
 def upsample(classes: dict, df: pd.DataFrame):
 
     for target, num in classes.items():
-        sampled_df = df.loc[df['noisy-label'] == config.idx_to_lb[target]].sample(num, random_state=5, replace=True)
+        sampled_df = df.loc[df['ground-truth'] == config.idx_to_lb[target]].sample(num, random_state=5, replace=True)
         df = pd.concat([df, sampled_df])
 
     return df
@@ -455,8 +488,8 @@ def create_dataset(args):
     if not test:
         # create train/val splits
         # upsample
-        df = upsample({0: 100, 1: 300, 3: 600, 5: 200}, df)
-        train_df, val_df = train_test_split(df, test_size=0.2, random_state=0, stratify=df[['noisy-label']], shuffle=True)
+        df = upsample(config.upsample, df)
+        train_df, val_df = train_test_split(df, test_size=0.2, random_state=0, stratify=df[['ground-truth']], shuffle=True)
         create_hdf5_files(train_df, "train", args)
         create_hdf5_files(val_df, "val", args)
     else:
@@ -473,6 +506,7 @@ if __name__ == '__main__':
     parser_pack_audio.add_argument('--dataset_csv', type=str, required=True, help='CSV file of dataset.')
     parser_pack_audio.add_argument('--workspace', type=str, required=True, help='Directory of your workspace.')
     parser_pack_audio.add_argument('--minidata', action='store_true', default=False, help='Set True for debugging on a small part of data.')
+    parser_pack_audio.add_argument('--noisy', action='store_true', default=False, help='Noisy train or clean train')
     parser_pack_audio.add_argument('--test', action='store_true', default=False, help='Train or test data')
     
     # Parse arguments

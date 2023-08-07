@@ -125,6 +125,8 @@ def forward(model, generator, return_input=False,
         if return_target:
             if 'target' in batch_data_dict.keys():
                 append_to_dict(output_dict, 'target', batch_data_dict['target'])
+            if 'soft-gt' in batch_data_dict.keys():
+                append_to_dict(output_dict, 'soft-gt', batch_data_dict['soft-gt'])
 
     for key in output_dict.keys():
         output_dict[key] = np.concatenate(output_dict[key], axis=0)
@@ -164,3 +166,71 @@ def pad_framewise_output(framewise_output, frames_num):
     """(batch_size, frames_num, classes_num)"""
 
     return output
+
+
+def expected_calibration_error_multiclass(y_true, y_prob, num_bins=10):
+    """
+    Calculate the Expected Calibration Error (ECE) for a probabilistic multiclass classification model.
+
+    Parameters:
+        y_true (numpy array): True labels (ground truth) as integers (0 to num_classes-1).
+        y_prob (numpy array): Predicted probabilities for each class (shape: [n_samples, num_classes]).
+        num_bins (int): Number of bins to divide the probability range into (default is 10).
+
+    Returns:
+        float: Expected Calibration Error (ECE) value.
+    """
+    # Ensure inputs are numpy arrays
+    y_true = np.array(y_true)
+    y_prob = np.array(y_prob)
+
+    # Calculate confidence bins
+    bin_boundaries = np.linspace(0, 1, num_bins + 1)
+
+    # Initialize variables to accumulate values for ECE calculation
+    ece = 0.0
+    bin_correct = np.zeros(num_bins)
+    bin_total = np.zeros(num_bins)
+
+    # Calculate predicted classes for each sample
+    y_pred = np.argmax(y_prob, axis=1)
+
+    # Calculate the confidence of the predictions (maximum probability)
+    confidences = np.max(y_prob, axis=1)
+
+    # Iterate over each prediction and calculate ECE
+    for i in range(num_bins):
+        # Find indices of predictions falling into the current bin
+        bin_indices = np.logical_and(confidences >= bin_boundaries[i], confidences < bin_boundaries[i + 1])
+
+        # Count total number of predictions in the bin for each class
+        bin_total[i] = np.sum(bin_indices)
+
+        # Calculate the accuracy for this bin for each class
+        if bin_total[i] > 0:
+            bin_accuracy = np.mean(y_pred[bin_indices] == y_true[bin_indices])
+            bin_correct[i] = bin_accuracy * bin_total[i]
+            ece += np.abs(bin_accuracy - np.mean(confidences[bin_indices])) * bin_total[i]
+
+    # Normalize ECE by the total number of predictions
+    ece /= np.sum(bin_total)
+
+    return ece
+
+
+def brier_score_multiclass(y_true, y_prob):
+    """
+    Calculate the Brier score for multiclass classification.
+
+    Parameters:
+        y_true (numpy array): True probabilities for each class (shape: [n_samples, num_classes]).
+        y_prob (numpy array): Predicted probabilities for each class (shape: [n_samples, num_classes]).
+
+    Returns:
+        float: Brier score value.
+    """
+
+    # Calculate the mean squared difference between predicted probabilities and true labels
+    brier_score = np.mean(np.sum((y_prob - y_true) ** 2, axis=1))
+
+    return brier_score
