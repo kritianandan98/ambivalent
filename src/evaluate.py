@@ -54,7 +54,7 @@ class Evaluator(object):
         cce_soft, _ = cce_loss(clipwise_output_cuda, soft_targets_cuda, None)
 
         kl_hard = kl_loss(clipwise_output_cuda, targets_cuda, None)
-        kl_soft = kl_loss(clipwise_output_cuda, soft_targets_cuda, None)
+        kl_soft = kl_loss(clipwise_output_cuda, soft_targets_cuda, None)            
 
         print("loss:", cce_hard)
         print("soft-loss:", cce_soft)

@@ -1,5 +1,6 @@
 """
 File to train and test torch models.
+
 """
 import os
 import wandb
@@ -15,22 +16,25 @@ import torch.nn as nn
 from . import config
  
 from .losses import get_loss_func
-from .utils import move_data_to_device, do_mixup
+from .utils import move_data_to_device
 from .utils import (create_folder, get_filename, create_logging)
 from .dataset import AmbiDataset, train_collate_fn, test_collate_fn
 from .models import Cnn14, Cnn10, Cnn6, CNN, MLP, LSTM, BiLSTM, Wav2Vec2
 from .evaluate import Evaluator, calculate_accuracy, calculate_F1
 from sklearn import metrics
 from sklearn.utils.class_weight import compute_class_weight
-from scipy.special import softmax
 import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
-from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
-
-#from torchinfo import summary
-#from torchsummary import summary
 
 os.environ["WANDB_MODE"] = "online"
+
+
+def convert_to_list_str(array2d):
+    result = []
+    for row in array2d:
+        result.append(str(result))
+    return result
+
 
 def train(args):
     # Arugments & parameters
@@ -120,20 +124,12 @@ def train(args):
 
     # Optimizers
     # Adam
-    #optimizer = optim.Adam(model.parameters(), lr=learning_rate, betas=(0.9, 0.999),
-    #    eps=1e-08, weight_decay=0., amsgrad=True)
 
     # SGD minibatch-gradient descent
     #optimizer = torch.optim.RMSprop(model.parameters(), lr=learning_rate, alpha=0.99, eps=1e-08, weight_decay=0, momentum=0, centered=False)
     #optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9, nesterov=True)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', patience=5, factor=0.5)
-    #T_0 = 5
-    #T_mult = 1
-    #scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0, T_mult)
-
-    #if 'mixup' in augmentation:
-    #    mixup_augmenter = Mixup(mixup_alpha=1.)
      
     # Evaluator
     evaluator = Evaluator(model=model)
@@ -169,7 +165,7 @@ def train(args):
     class_weights = torch.tensor(class_weights,dtype=torch.float)
     class_weights = class_weights.to(device)
 
-    train_loss_params = {"weights": class_weights, "total_epochs": n_epochs, "total_iterations": n_epochs * len(train_loader), "exp_base": 6, "transit_time_ratio": 0.25 , "counter": "iteration"}
+    train_loss_params = {"weights": class_weights, "total_epochs": n_epochs, "total_iterations": n_epochs * len(train_loader), "exp_base": 6, "transit_time_ratio": 0.7 , "counter": "iteration"}
     loss_func = get_loss_func(loss_type, train_loss_params)
 
 
@@ -180,11 +176,18 @@ def train(args):
 
     epoch = 0
     iteration = 1
+
+    # save predictions in csv file 
+    #val_df = pd.DataFrame(columns=['wavfile','noisy-label', 'gt''prediction' 'new_target''audio-path'])
+
+    with open('train-predictions.csv', 'w+') as fwrite:
+        fwrite.write('wavfile, epoch, old_label, new_label, gt_label\n')
     while epoch < n_epochs:
         # Set model to train mode
         labels_changed = 0
         labels_corrected = 0
         model.train(True)
+
 
         n_batches = 0
         # Train on mini batches
@@ -193,37 +196,30 @@ def train(args):
             for key in batch_data_dict.keys():
                 batch_data_dict[key] = move_data_to_device(batch_data_dict[key], device)
 
-            #print("features", batch_data_dict['features'])
-            #print("features", batch_data_dict['features'].shape)
-            #print(batch_data_dict['features'].shape)
-            #batch_data_dict['features'] = move_data_to_device(batch_data_dict['features'], device)
             batch_output_dict = {"clipwise_output": model(batch_data_dict['features'])}
-            #"""{'clipwise_output': (batch_size, classes_num), ...}"""
-            #print("target", batch_data_dict['target'].shape)
-            #print("clipwise output", batch_output_dict['clipwise_output'].shape)
             batch_data_dict['target'] = move_data_to_device(batch_data_dict['target'], device)
             batch_target_dict = {'target': batch_data_dict['target']}
-            #    """{'target': (batch_size, classes_num)}"""
 
-            # loss
-            #print("clip wise", batch_output_dict['clipwise_output'])
-            #print(" target ", batch_target_dict['target'].shape)
-            #print("total batches", len(train_loader))
-            #print("total iter", loss_params['total_iterations'])
-            #print("cur time", iteration)
+
             batch_loss, new_targets = loss_func(y_pred=batch_output_dict['clipwise_output'], y_true=batch_target_dict['target'], cur_time=iteration)
             if loss_type == 'proselflc':
                 old_targets = torch.argmax(batch_data_dict['target'], -1)
                 new_targets = torch.argmax(new_targets, -1)
                 gt = torch.argmax(batch_data_dict['gt'], -1)
-                #print(new_targets)
-                #print(old_targets)
-                #print(gt)
+
                 for i, t in enumerate(new_targets):
                     if t != old_targets[i]:
                         if t == gt[i]:
                             labels_corrected += 1
                         labels_changed += 1
+
+                    wavfile = batch_data_dict['audio_name'][i]
+                    old_label = config.idx_to_lb[old_targets[i].item()]
+                    new_label = config.idx_to_lb[new_targets[i].item()]
+                    gt_label = config.idx_to_lb[gt[i].item()]
+
+                    with open('train-predictions.csv','a') as fwrite:
+                        fwrite.write(wavfile + ',' + str(epoch) + ',' + str(old_label) + ',' + str(new_label) + ','+ str(gt_label) +'\n')
 
 
             ## Backward (mini batch GD)
@@ -237,10 +233,7 @@ def train(args):
             n_batches += 1
             iteration += 1
 
-            #scheduler.step(epoch + i / len(train_loader))
 
-
-        ## Set the model to evaluation mode, disabling dropout and using population
         # Train Statistics
         wandb.log({'train labels corrected': labels_corrected, 'train labels changed': labels_changed}, step=epoch)
         model.eval()
@@ -252,7 +245,6 @@ def train(args):
         wandb.log({"train/loss": train_statistics['cce-hard'] ,"train/f1": train_statistics['f1_score']}, step=epoch)
 
         # Validation Statistics
-        # val statistics
         val_statistics, pred_labels = evaluator.evaluate(validate_loader)
         logging.info('Validation loss: {:.3f}'.format(val_statistics['cce-hard']))
         logging.info('Validate accuracy: {:.3f}'.format(val_statistics['accuracy']))
@@ -268,7 +260,7 @@ def train(args):
             print("Current learning rate is: {}".format(param_group['lr']))
             wandb.log({'lr': param_group['lr']}, step=epoch)
 
-        ## save model if drop in valid loss
+        ## save model if rise in valid F1
         if val_f1 > best_valid_f1 and os.environ["WANDB_MODE"] == "online":
             best_valid_f1 = val_f1
             checkpoint = {
@@ -341,7 +333,7 @@ def test(args):
     model.load_state_dict(model_checkpoint['model'])
 
     # Parallel
-    print('GPU number: {}'.format(torch.cuda.device_count()))
+    logging.info('GPU number: {}'.format(torch.cuda.device_count()))
     #model = torch.nn.DataParallel(model)
 
     dataset = AmbiDataset(test_hdf5_path)
@@ -359,33 +351,43 @@ def test(args):
     model.eval()
 
     if 'Wav2Vec2' in run_name:
+        logging.info('Extracting t-SNE embeddings.. (Change test_len to 500 if this gets stuck)')
         # Load original pre-trained model and processor
         test_len = len(test_loader)
-        test_len = 100
+        #test_len = 500
         x = torch.vstack([torch.Tensor(dataset[i]['features'][0]) for i in range(test_len)])
         x = x.to('cuda')
+        gt = np.array([config.idx_to_lb[np.argmax(dataset[i]['gt'])] for i in range(test_len)])
 
         predicted_embeddings = []
-        labels = []
+
         for input in x:
             input = input.unsqueeze(0)
             embed = torch.mean(model.upstream(input)['last_hidden_state'], dim=1).squeeze()
             embed = embed.detach().cpu().numpy()
-            #print(embed.shape)
             predicted_embeddings.append(embed)
 
         predicted_embeddings = np.array(predicted_embeddings)
         # Perform t-SNE dimensionality reduction
-        print(predicted_embeddings.shape)
         tsne = TSNE(n_components=2, random_state=42)
         tsne_embeddings = tsne.fit_transform(predicted_embeddings)
 
         # Plot the t-SNE embeddings
         plt.figure(figsize=(10, 8))
-        plt.scatter(tsne_embeddings[:, 0], tsne_embeddings[:, 1], marker='o', color='b', s=10)
-        plt.title("t-SNE Embeddings from Model Predictions")
-        plt.xlabel("t-SNE Dimension 1")
-        plt.ylabel("t-SNE Dimension 2")
+
+        for label in config.labels:
+            embeddings = []
+            for i in range(tsne_embeddings.shape[0]):
+                gt_label = gt[i]
+                if gt_label == label:
+                    embeddings.append(tsne_embeddings[i,:])
+            embeddings = np.array(embeddings)
+            plt.scatter(embeddings[:, 0], embeddings[:, 1], marker='o', label=label)
+        
+        plt.title("Wav2Vec2")
+        plt.xlabel("")
+        plt.ylabel("")
+        plt.legend()
         plt.grid(True)
         plt.savefig('/home/kriti/ambivalent/images/embed-plot.png')
 
@@ -399,21 +401,19 @@ def test(args):
     for id, data_dict in tqdm(enumerate(test_loader), total=len(test_loader)):
         segment_preds = np.zeros(classes_num, dtype='float32')
         segment_preds = move_data_to_device(segment_preds, device)
+
         for seg_features in data_dict['features']:
-            #print(seg_features.dtype)
             seg_features = move_data_to_device(seg_features, device)
             seg_features = seg_features.unsqueeze(0) # batch_size of 1
-            #print("seg features", seg_features.shape)
             prediction = model(seg_features)[0]
             segment_preds += prediction
             seg_outputs.append(prediction.detach().cpu().numpy())
             seg_targets.append(data_dict['target'])
+
         segment_preds /= len(data_dict['features'])
         outputs.append(segment_preds.detach().cpu().numpy())
         targets.append(data_dict['target'])
 
-    #print("outputs", outputs)
-    #print("targets", targets)
 
     outputs = np.array(outputs, dtype='float32') # (audios_num, classes_num)
     targets = np.vstack(targets)
@@ -421,27 +421,19 @@ def test(args):
     seg_outputs = np.array(seg_outputs, dtype='float32')
     seg_targets = np.vstack(seg_targets)
 
-    #print("output shape", outputs.shape)
-    #print("targets shape", targets.shape)
+    predictions = outputs
+    seg_predictions = seg_outputs
 
-    #print("logits:", outputs)
-    predictions = outputs / sum(outputs)
-    seg_predictions = seg_outputs / sum(seg_outputs)
-    #print("target:", targets)
+    #report = metrics.classification_report(np.argmax(seg_targets, -1), np.argmax(seg_predictions, axis=-1), target_names=config.labels)
+    #print("Segment wise")
+    #print(report)
 
     cm = metrics.confusion_matrix(np.argmax(targets, axis=-1), np.argmax(predictions, axis=-1), labels=None)
-    print(cm)
+    print("Confusion matrix", cm)
 
     report = metrics.classification_report(np.argmax(targets, -1), np.argmax(predictions, axis=-1), target_names=config.labels)
-    print("Adding up predictions")
     print(report)
 
-    report = metrics.classification_report(np.argmax(seg_targets, -1), np.argmax(seg_predictions, axis=-1), target_names=config.labels)
-    print("Segment wise")
-    print(report)
-
-    print("targets", targets)
-    print("predictions", predictions)
     accuracy = calculate_accuracy(targets, predictions)
     f1 = calculate_F1(targets, predictions)
 

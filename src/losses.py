@@ -182,29 +182,20 @@ class ProSelfLC(CrossEntropy):
                 time_ratio_minus_half = torch.tensor(
                     cur_time / self.total_iterations - self.transit_time_ratio
                 )
-            #print("cur time", cur_time)
-            #print("transit time ratio", self.transit_time_ratio)
-            #print("time ratio minus half", time_ratio_minus_half)
             global_trust = 1 / (1 + torch.exp(-self.exp_base * time_ratio_minus_half))
-            #print("global trust", global_trust)
             # example-level trust/knowledge
             class_num = pred_probs.shape[1]
             H_pred_probs = torch.sum(
                 -(pred_probs + 1e-12) * torch.log(pred_probs + 1e-12), 1
             )
             H_uniform = -torch.log(torch.tensor(1.0 / class_num))
-            #print("H_pred_probs", H_pred_probs)
-            #print("H_uniform", H_uniform)
             example_trust = 1 - H_pred_probs / H_uniform
-            #example_trust = torch.ones((H_pred_probs.shape))
             example_trust.to('cuda')
-            #print("example trust", example_trust)
             # the trade-off
             self.epsilon = global_trust * example_trust
             # from shape [N] to shape [N, 1]
             self.epsilon = self.epsilon[:, None]
             self.epsilon = self.epsilon.to('cuda')
-            #print("epsilon", self.epsilon)
 
     def forward(self, y_pred: Tensor, y_true: Tensor, cur_time: int) -> Tensor:
         """
@@ -216,7 +207,6 @@ class ProSelfLC(CrossEntropy):
         Outputs:
             Loss: a scalar tensor, normalised by N.
         """
-        #pred_probs = F.softmax(pred_probs, -1)
         if self.counter == "epoch":
             # cur_time indicate epoch
             if not (cur_time <= self.total_epochs and cur_time >= 0):
@@ -244,13 +234,7 @@ class ProSelfLC(CrossEntropy):
 
         # update self.epsilon
         self.update_epsilon_progressive_adaptive(y_pred, cur_time)
-        #print(pred_probs.get_device())
-        #print(target_probs.get_device())
-        #print(self.epsilon.get_device())
         new_target_probs = (1 - self.epsilon) * y_true + self.epsilon * y_pred
-        # reuse CrossEntropy's forward computation
-        #print("pred probs", pred_probs)
-        #print("old target probs", target_probs)
-        #print("new target probs", new_target_probs)     
+        # reuse CrossEntropy's forward computation  
         loss, _ = super().forward(y_pred, new_target_probs, cur_time)   
         return loss, new_target_probs

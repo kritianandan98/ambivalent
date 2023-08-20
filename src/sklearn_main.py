@@ -1,29 +1,26 @@
 """
-File to train and test the model.
+File to train and test the model using ML algorithms
 """
 import os
 import h5py
 import numpy as np
 import pandas as pd
 import argparse
-from tqdm import tqdm
 import logging
 import xgboost as xgb
 
 import torch
 import torch.nn as nn
 from . import config
- 
-from .losses import get_loss_func
+
 from .utils import (get_filename, create_logging)
 from sklearn.neural_network import MLPClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, f1_score, classification_report
-from sklearn.model_selection import StratifiedKFold
 
 #from torchsummary import summary
 
-os.environ["WANDB_MODE"] = "offline"
+os.environ["WANDB_MODE"] = "online"
 
 
 def upsample(classes: dict, features, targets):
@@ -64,18 +61,12 @@ def main(args):
     pretrained_checkpoint_path = config.pretrained_checkpoint_path
     freeze_base = config.freeze_base
     loss_type = config.loss_type
-    n_epochs = config.epochs
     augmentation = config.augmentation
-    learning_rate = config.learning_rate
     batch_size = config.batch_size
-    grad_accum = config.grad_accum
-    num_workers = config.num_workers
     run_name = config.run_name
     classes_num = config.classes_num
     feature_name = config.feature_name
     labels = config.labels
-
-    loss_func = get_loss_func(loss_type)
     pretrain = True if pretrained_checkpoint_path else False
 
     
@@ -95,10 +86,6 @@ def main(args):
     logging.info(args)
     
     logging.info(f'Loading model: {model_type}, classes: {classes_num}')
-    # Model
-
-    if model_type == "mlp":
-        model = MLPClassifier()
 
     # Parallel
     print('GPU number: {}'.format(torch.cuda.device_count()))
@@ -109,14 +96,6 @@ def main(args):
 
     val_X, _, val_y = get_data(val_hdf5_path)
     test_X, _, test_y = get_data(test_hdf5_path)
-
-    #test_y = np.argmax(test_y, axis=-1)
-
-    #print("train_X", train_X.shape)
-    #print("train y", train_y.shape)
-
-    #print("val_x", val_X.shape)
-    #print("val_y", val_y.shape)
 
 
     full_X = np.concatenate([train_X, val_X], axis=0)

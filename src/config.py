@@ -13,13 +13,13 @@ n_fft = 512
 hop_size = 256
 timesteps = math.ceil(clip_samples / hop_size)
 device = 'cuda'
-feature_name = "audios-segmented" # hand-crafted, mean-mfcc, log-mels, all-timesteps, all-fixed, audios, audios-segmented, logmels-a
+feature_name = "audios-segmented" # 'audios-segmented' for Wav2Vec2, 'logmels-a' for BiLSTM, 'handcrafted' for ML-algo exp
 
 # hyperparameters
-run_name = "Wav2Vec2-final-baseline-noisy-hard-26.48" # mlp, 
+run_name = "Wav2Vec2-final-baseline-noisy-hard-40.19" # mlp, 
 epochs = 20
 model_type = "Wav2Vec2" # BiLSTM, 
-loss_type = "cce"
+loss_type = "cce" # proselflc or cce
 learning_rate = 1e-5
 batch_size = 16
 grad_accum = 8 # accumulate every xth batch

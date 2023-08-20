@@ -450,14 +450,6 @@ def create_hdf5_files(df, name, args):
                 info_grp['soft-gt'][idx] = meta_dict['soft-gt'][n]
                 idx += 1
 
-
-            #hf['feature_shape'][n] = features.shape
-            #print(type(features))
-            #print("feature shape", features.shape)
-
-            
-
-        #print(hf['features']['1'][0])
     print("IDX", idx)
 
     avg_time /= audios_num

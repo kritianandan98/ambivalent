@@ -90,7 +90,6 @@ class BiLSTM(nn.Module):
         # squeeze the tensor to shape (batch_size, hidden_size) before feeding to Fully Connected Layer
         out = out.squeeze(1)
         out = self.hidden2out(out)
-        #print(out.shape)
         out = F.softmax(out, -1)
         return out
     
@@ -115,16 +114,9 @@ class Wav2Vec2(nn.Module):
         )
 
     def forward(self, x):
-        #print
-        #x = [torch.narrow(wav,0,0,x_len[i]) for (i,wav) in enumerate(x.squeeze(1))]
-        #print(x.shape)
-        #print(x)
         x = self.upstream(x)['last_hidden_state']
-        #print(x.shape)
         x = torch.mean(x, dim=1)
-        #print(x.shape)
         out = self.fc(x)
-        #print(torch.argmax(out, -1))
         out = F.softmax(out, -1)
         return out
 
@@ -285,8 +277,7 @@ class Cnn6(nn.Module):
         #x = self.logmel_extractor(x)    # (batch_size, 1, time_steps, mel_bins)
         
         input = input.unsqueeze(1)  # (batch_size, 1, time_steps, mel_bins)
-        print("Input ", input.shape)
-
+        
         x = input.transpose(1, 3)
         x = self.bn0(x)
         x = x.transpose(1, 3)
