@@ -1,15 +1,11 @@
 import torch
 import numpy as np
-import logging
-import torch.nn.functional as F
 from sklearn import metrics
 from scipy.special import softmax
-from . import config
-from tqdm import tqdm
 from .losses import get_loss_func
 
 from .utils import forward
-from .utils import move_data_to_device, expected_calibration_error_multiclass, brier_score_multiclass
+from .utils import expected_calibration_error_multiclass, brier_score_multiclass
 
 def calculate_accuracy(y_true, y_score):
     accuracy = metrics.accuracy_score(np.argmax(y_true, axis=-1), np.argmax(y_score, axis=-1))
@@ -21,11 +17,13 @@ def calculate_F1(y_true, y_score):
 
 
 class Evaluator(object):
+    """
+    Class for evaluating the model.
+    """
     def __init__(self, model):
         self.model = model
 
     def evaluate(self, data_loader):
-
         # Forward
         output_dict = forward(
         model=self.model, 
@@ -33,7 +31,6 @@ class Evaluator(object):
         return_target=True)
 
         clipwise_output = output_dict['clipwise_output']    # (audios_num, classes_num)
-        #print("logits:", clipwise_output)
         predictions = softmax(clipwise_output, axis=-1)
         targets = output_dict['target']    # (audios_num, classes_num)
         soft_targets = output_dict['soft-gt']
@@ -56,8 +53,8 @@ class Evaluator(object):
         kl_hard = kl_loss(clipwise_output_cuda, targets_cuda, None)
         kl_soft = kl_loss(clipwise_output_cuda, soft_targets_cuda, None)            
 
-        print("loss:", cce_hard)
-        print("soft-loss:", cce_soft)
+        #print("loss:", cce_hard)
+        #print("soft-loss:", cce_soft)
         #print("targets", targets)
         #print("predictions", predictions)
         accuracy = calculate_accuracy(targets, predictions)

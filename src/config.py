@@ -6,7 +6,7 @@ workspace = '/home/kriti/ambivalent'
 sample_rate = 16000
 clip_samples = sample_rate * 5
 mel_bins = 128
-n_mfcc = 12 # set to 12 for all-timesteps, all-fixed and 128 for mfccs
+n_mfcc = 12 # set to 12 for feature_name = 'handcrafted'
 fmin = 0
 fmax = 8000
 n_fft = 512
@@ -18,8 +18,8 @@ feature_name = "audios-segmented" # 'audios-segmented' for Wav2Vec2, 'logmels-a'
 # hyperparameters
 run_name = "Wav2Vec2-final-baseline-noisy-hard-40.19" # mlp, 
 epochs = 20
-model_type = "Wav2Vec2" # BiLSTM, 
-loss_type = "cce" # proselflc or cce
+model_type = "Wav2Vec2" # BiLSTM, Wav2Vec2
+loss_type = "cce" # proselflc, cce
 learning_rate = 1e-5
 batch_size = 16
 grad_accum = 8 # accumulate every xth batch

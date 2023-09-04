@@ -1,33 +1,22 @@
 import numpy as np
 import h5py
-import csv
-import time
-import logging
-import logging
-import librosa
-from . import config
-
 
 class AmbiDataset(object):
-    def __init__(self, hdf5_path):
-        """This class takes the meta of an audio clip as input, and return 
-        the waveform and target of the audio clip. This class is used by DataLoader. 
+    def __init__(self, hdf5_path: str):
+        """
+        This class is used by DataLoader. 
         Args:
-          clip_samples: int
-          classes_num: int
+            hdf5_path: path to stored features (hdf5 path)
         """
         self.hdf5_path = hdf5_path
     
-    def __getitem__(self, index):
-        """Load waveform and target of an audio clip.
-        
-        Args:
-          index: int
-        Returns: 
-          data_dict: {
-            'audio_name': str, 
-            'features': (mel_bins, timesteps), 
-            'target': (classes_num,)}
+    def __getitem__(self, index: int) -> dict:
+        """
+        Load waveform and target of an audio clip.
+            Args:
+                index   : index of the audio clip in the dataset
+            Returns: 
+                data_dict: Dictionary containing audio features, noisy target, ground truth and soft ground truth for a given audio
         """
         segments = False
         with h5py.File(self.hdf5_path, 'r') as hf:
@@ -37,7 +26,6 @@ class AmbiDataset(object):
             target = hf['info']['target'][index].astype(np.float32)
             gt = hf['info']['gt'][index].astype(np.float32)
             soft_gt = hf['info']['soft-gt'][index].astype(np.float32)
-            #print(features[0].shape)
 
         data_dict = {
             'audio_name': audio_name, 'audio_path': audio_path, 'features': features, 'target': target, 'gt': gt, 'soft-gt': soft_gt, 'segments': segments}
@@ -50,8 +38,27 @@ class AmbiDataset(object):
             return len(hf['info']['audio_name'])
 
 
-def test_collate_fn(list_data_dict):
-    """Collate data.
+def train_collate_fn(list_data_dict: dict) -> dict:
+    """
+    Collate data for trainloader.
+    Args:
+      list_data_dict, e.g., [{'audio_name': str, 'feastures': (clip_samples,), ...}, 
+                             {'audio_name': str, 'features': (clip_samples,), ...},
+                             ...]
+    Returns:
+      np_data_dict, dict, e.g.,
+          {'audio_name': (batch_size,), 'features': (batch_size, clip_samples), ...}
+    """
+    np_data_dict = {}
+    for key in list_data_dict[0].keys():
+        np_data_dict[key] = np.array([data_dict[key] for data_dict in list_data_dict])
+
+    return np_data_dict
+
+
+def test_collate_fn(list_data_dict: dict) -> dict:
+    """
+    Collate data for testloader.
     Args:
       list_data_dict, e.g., [{'audio_name': str, 'feastures': (clip_samples,), ...}, 
                              {'audio_name': str, 'features': (clip_samples,), ...},
@@ -69,35 +76,4 @@ def test_collate_fn(list_data_dict):
         else:
             np_data_dict[key] = np.array([data_dict[key] for data_dict in list_data_dict], dtype='object')
     return np_data_dict
-
-
-def train_collate_fn(list_data_dict):
-    np_data_dict = {}
-    for key in list_data_dict[0].keys():
-        np_data_dict[key] = np.array([data_dict[key] for data_dict in list_data_dict])
-
-    return np_data_dict
-        #else:
-        #    np_data_dict[key] = np.concatenate([data_dict[key] for data_dict in list_data_dict], 
-        #    if len(list_data_dict[0][key].shape) > 1:
-        #        max_len = max([x[key].shape[-2] for x in list_data_dict])
-        #        #print(max_len)
-        #        for x in list_data_dict:
-        #            new_ = np.pad(x[key], ((0, max_len - len(x[key])), (0, 0)), 'edge')
-        #            #print("x key", x[key].shape)
-        #            #print(new_)
-        #            #print(" padded x", new_.shape)
-        #            
-        #        np_data_dict[key] = np.concatenate([np.expand_dims(np.pad(x[key], ((0, max_len - len(x[key])), (0, 0)), 'edge'), axis=0) for x in list_data_dict], axis=0) # (timesteps, features)
-        #    else:
-        #        np_data_dict[key] = np.array([data_dict[key] for data_dict in list_data_dict])
-        #        #print("concatenate", np_data_dict[key].shape)
-        #if key == 'target' or key == 'gt':
-        #    np_data_dict[key] = np.array([data_dict[key] for data_dict in list_data_dict]
-        #    if len(list_data_dict[0][key].shape) == 1:
-        #        np_data_dict[key] = np.expand_dims(np_data_dict[key], axis=0)
-        #else:
-        #    
-    #print(np_data_dict['features'])
-    #print(np_data_dict['features'].shape)
 

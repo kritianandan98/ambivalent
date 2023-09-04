@@ -14,6 +14,7 @@ Babel @ file:///home/conda/feedstock_root/build_artifacts/babel_1677767029043/wo
 backcall @ file:///home/conda/feedstock_root/build_artifacts/backcall_1592338393461/work
 backports.functools-lru-cache @ file:///home/conda/feedstock_root/build_artifacts/backports.functools_lru_cache_1687772187254/work
 beautifulsoup4 @ file:///home/conda/feedstock_root/build_artifacts/beautifulsoup4_1680888073205/work
+black==23.7.0
 bleach @ file:///home/conda/feedstock_root/build_artifacts/bleach_1656355450470/work
 blinker @ file:///home/conda/feedstock_root/build_artifacts/blinker_1681349778161/work
 brotlipy @ file:///home/conda/feedstock_root/build_artifacts/brotlipy_1648854164373/work
@@ -38,6 +39,7 @@ executing @ file:///home/conda/feedstock_root/build_artifacts/executing_16673173
 fastjsonschema @ file:///home/conda/feedstock_root/build_artifacts/python-fastjsonschema_1684761244589/work/dist
 fastprogress @ file:///home/jhoward/mambaforge/conda-bld/fastprogress_1658473398631/work
 filelock @ file:///home/conda/feedstock_root/build_artifacts/filelock_1686612785345/work
+flake8==6.1.0
 flit_core @ file:///home/conda/feedstock_root/build_artifacts/flit-core_1645629044586/work/source/flit_core
 fonttools @ file:///home/conda/feedstock_root/build_artifacts/fonttools_1689196741201/work
 frozenlist @ file:///home/conda/feedstock_root/build_artifacts/frozenlist_1689244380201/work
@@ -84,10 +86,12 @@ Markdown @ file:///home/conda/feedstock_root/build_artifacts/markdown_1679584000
 MarkupSafe @ file:///home/conda/feedstock_root/build_artifacts/markupsafe_1685769048265/work
 matplotlib @ file:///home/conda/feedstock_root/build_artifacts/matplotlib-suite_1663358908800/work
 matplotlib-inline @ file:///home/conda/feedstock_root/build_artifacts/matplotlib-inline_1660814786464/work
+mccabe==0.7.0
 mistune @ file:///home/conda/feedstock_root/build_artifacts/mistune_1635844679781/work
 msgpack==1.0.5
 multidict @ file:///home/conda/feedstock_root/build_artifacts/multidict_1672339396340/work
 munkres==1.1.4
+mypy-extensions==1.0.0
 nbclassic @ file:///home/conda/feedstock_root/build_artifacts/nbclassic_1683202081046/work
 nbclient @ file:///home/conda/feedstock_root/build_artifacts/nbclient_1656688109017/work
 nbconvert @ file:///home/conda/feedstock_root/build_artifacts/nbconvert-meta_1649676641343/work
@@ -106,6 +110,7 @@ packaging @ file:///home/conda/feedstock_root/build_artifacts/packaging_16813370
 pandas @ file:///home/conda/feedstock_root/build_artifacts/pandas_1688012250243/work
 pandocfilters @ file:///home/conda/feedstock_root/build_artifacts/pandocfilters_1631603243851/work
 parso @ file:///home/conda/feedstock_root/build_artifacts/parso_1638334955874/work
+pathspec==0.11.2
 pathtools==0.1.2
 patsy @ file:///home/conda/feedstock_root/build_artifacts/patsy_1665356157073/work
 pexpect @ file:///home/conda/feedstock_root/build_artifacts/pexpect_1602535608087/work
@@ -124,8 +129,10 @@ ptyprocess @ file:///home/conda/feedstock_root/build_artifacts/ptyprocess_160941
 pure-eval @ file:///home/conda/feedstock_root/build_artifacts/pure_eval_1642875951954/work
 pyasn1==0.4.8
 pyasn1-modules==0.2.7
+pycodestyle==2.11.0
 pycparser @ file:///home/conda/feedstock_root/build_artifacts/pycparser_1636257122734/work
 pydub @ file:///home/conda/feedstock_root/build_artifacts/pydub_1615612442567/work
+pyflakes==3.1.0
 Pygments @ file:///home/conda/feedstock_root/build_artifacts/pygments_1681904169130/work
 PyJWT @ file:///home/conda/feedstock_root/build_artifacts/pyjwt_1683676063469/work
 pyOpenSSL @ file:///home/conda/feedstock_root/build_artifacts/pyopenssl_1685514481738/work

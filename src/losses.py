@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 import torch.nn.functional as F
-from . import config
+
 
 class ParamException(Exception):
     """
@@ -21,45 +21,41 @@ class ParamException(Exception):
         return self.msg
 
 
-def get_loss_func(loss_type, params=None):
-    if loss_type == 'cce':
+def get_loss_func(loss_type: str, params=None):
+    if loss_type == "cce":
         return CrossEntropy()
-    if loss_type == 'kl':
+    if loss_type == "kl":
         return KLDiv()
-    elif loss_type == 'proselflc':
+    elif loss_type == "proselflc":
         return ProSelfLC(params)
     else:
         print("Incorrect loss fn name!")
 
-    
+
 class KLDiv(nn.Module):
     """
-        Compute the Kullback-Leibler (KL) Divergence Loss given predicted probabilities and target probabilities.
-        
-        Arguments:
-        y_pred -- PyTorch tensor of shape (num_samples, num_classes) representing predicted probabilities.
-        y_true -- PyTorch tensor of shape (num_samples, num_classes) representing target probabilities.
-        
-        Returns:
-        loss -- scalar value representing the KL Divergence Loss averaged over the samples.
+    Compute the Kullback-Leibler (KL) Divergence Loss given predicted probabilities and target probabilities.
     """
+
     def __init__(self) -> None:
         super().__init__()
 
     def forward(self, y_pred: Tensor, y_true: Tensor, cur_time: int) -> Tensor:
-        """one_hot=True, 
-        Inputs:
-            pred_probs: predictions of shape (N, C).
-            target_probs: targets of shape (N, C).
-
-        Outputs:
-            Loss: a scalar tensor, normalised by N.
         """
-        assert y_pred.shape == y_true.shape, "Shapes of y_pred and y_true must be the same."
-    
+        Arguments
+            y_pred: PyTorch tensor of shape (num_samples, num_classes) representing predicted probabilities.
+            y_true: PyTorch tensor of shape (num_samples, num_classes) representing target probabilities.
+
+        Returns
+            loss: scalar value representing the KL Divergence loss averaged over the samples.
+        """
+        assert (
+            y_pred.shape == y_true.shape
+        ), "Shapes of y_pred and y_true must be the same."
+
         # Compute the KL Divergence Loss using the PyTorch function kl_div
-        loss = F.kl_div(y_pred.log(), y_true, reduction='mean')
-        
+        loss = F.kl_div(y_pred.log(), y_true, reduction="mean")
+
         return loss
 
 
@@ -71,40 +67,35 @@ class CrossEntropy(nn.Module):
         2. bootsoft (self label correction), joint-soft,etc.
         3. proselflc
         ...
-
-    Inputs: two tensors for predictions and target.
-        1. predicted probability distributions of shape (N, C)
-        2. target probability  distributions of shape (N, C)
-
-    Outputs: scalar tensor, normalised by the number of examples.
     """
 
     def __init__(self) -> None:
         super().__init__()
 
     def forward(self, y_pred: Tensor, y_true: Tensor, cur_time: int) -> Tensor:
-        """one_hot=True, 
-        Inputs:
-            pred_probs: predictions of shape (N, C).
-            target_probs: targets of shape (N, C).
+        """
+        Arguments
+            y_pred: PyTorch tensor of shape (num_samples, num_classes) representing predicted probabilities.
+            y_true: PyTorch tensor of shape (num_samples, num_classes) representing target probabilities.
 
-        Outputs:
-            Loss: a scalar tensor, normalised by N.
+        Returns
+            loss: scalar value representing the Cross Entropy loss averaged over the samples.
         """
         epsilon = 1e-15  # Small constant to avoid log(0)
-    
+
         # Ensure y_pred and y_true have the same shape
-        assert y_pred.shape == y_true.shape, "Shapes of y_pred and y_true must be the same."
-    
+        assert (
+            y_pred.shape == y_true.shape
+        ), "Shapes of y_pred and y_true must be the same."
+
         # Clip the predicted probabilities to avoid log(0)
         y_pred = torch.clamp(y_pred, epsilon, 1.0 - epsilon)
-        
+
         # Compute the Cross Entropy Loss
-        loss = - torch.sum(y_true * torch.log(y_pred), dim=1)
+        loss = -torch.sum(y_true * torch.log(y_pred), dim=1)
         avg_loss = torch.mean(loss)
-        
+
         return avg_loss, None
-    
 
 
 class ProSelfLC(CrossEntropy):
@@ -171,7 +162,7 @@ class ProSelfLC(CrossEntropy):
             # only exist when counter == "iteration"
             self.total_iterations = params["total_iterations"]
 
-    def update_epsilon_progressive_adaptive(self, pred_probs, cur_time):
+    def update_epsilon_progressive_adaptive(self, pred_probs: Tensor, cur_time: int):
         with torch.no_grad():
             # global trust/knowledge
             if self.counter == "epoch":
@@ -190,22 +181,22 @@ class ProSelfLC(CrossEntropy):
             )
             H_uniform = -torch.log(torch.tensor(1.0 / class_num))
             example_trust = 1 - H_pred_probs / H_uniform
-            example_trust.to('cuda')
+            example_trust.to("cuda")
             # the trade-off
             self.epsilon = global_trust * example_trust
             # from shape [N] to shape [N, 1]
             self.epsilon = self.epsilon[:, None]
-            self.epsilon = self.epsilon.to('cuda')
+            self.epsilon = self.epsilon.to("cuda")
 
     def forward(self, y_pred: Tensor, y_true: Tensor, cur_time: int) -> Tensor:
         """
-        Inputs:
-            1. predicted probability distributions of shape (N, C)
-            2. target probability  distributions of shape (N, C)
-            3. current time (epoch/iteration counter).
+        Args
+            y_pred      : predicted probability distributions of shape (N, C)
+            y_true      : target probability  distributions of shape (N, C)
+            cur_time    : current time (epoch/iteration counter).
 
-        Outputs:
-            Loss: a scalar tensor, normalised by N.
+        Returns
+            Loss        : a scalar tensor, normalised by N.
         """
         if self.counter == "epoch":
             # cur_time indicate epoch
@@ -235,6 +226,6 @@ class ProSelfLC(CrossEntropy):
         # update self.epsilon
         self.update_epsilon_progressive_adaptive(y_pred, cur_time)
         new_target_probs = (1 - self.epsilon) * y_true + self.epsilon * y_pred
-        # reuse CrossEntropy's forward computation  
-        loss, _ = super().forward(y_pred, new_target_probs, cur_time)   
+        # reuse CrossEntropy's forward computation
+        loss, _ = super().forward(y_pred, new_target_probs, cur_time)
         return loss, new_target_probs
